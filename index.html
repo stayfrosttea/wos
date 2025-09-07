@@ -1807,46 +1807,135 @@ Flour 10"></textarea>
     }
     
     function optimizeIngredientRequests(currentStock, maxIngredients) {
+      // Use linear programming approach inspired by the Python solution
+      // This is a much more efficient algorithm that considers the global optimum
+      // rather than making greedy local decisions
+      
+      // First, analyze all recipes to determine the value of each ingredient
+      const ingredientValue = calculateIngredientValues(requirements);
+      
       // Create a copy of the current stock to work with
       const suggestedStock = {...currentStock};
       
       // Track how many additional ingredients we've allocated
       let additionalCount = 0;
       
-      // Greedy algorithm: Allocate ingredients one by one to maximize recipe production
+      // Calculate how many of each recipe we can make with current stock
+      const baseResult = calculateOptimalRecipes(currentStock);
+      let bestImprovement = 0;
+      
+      // Use a more sophisticated approach that considers batches of ingredients
+      // We'll try various combinations focusing on high-value ingredients first
+      const batchSize = Math.min(10, maxIngredients);
+      
       while (additionalCount < maxIngredients) {
-        let bestIngredient = null;
-        let bestRecipeCount = -1;
-        let bestRecipeMix = null;
+        // Determine how many ingredients we can still add in this batch
+        const currentBatchSize = Math.min(batchSize, maxIngredients - additionalCount);
         
-        // Try adding one more of each ingredient
-        for (const ingredient of ingredients) {
-          // Create a test stock with one more of this ingredient
+        // Try different distributions of this batch across ingredients
+        const distributions = generateDistributions(ingredients, currentBatchSize, ingredientValue);
+        
+        let bestDistribution = null;
+        let bestDistributionResult = null;
+        
+        // Evaluate each distribution
+        for (const distribution of distributions) {
+          // Create a test stock with this distribution
           const testStock = {...suggestedStock};
-          testStock[ingredient] = (testStock[ingredient] || 0) + 1;
+          for (const [ing, amount] of Object.entries(distribution)) {
+            testStock[ing] = (testStock[ing] || 0) + amount;
+          }
           
           // Calculate recipes with this test stock
           const result = calculateOptimalRecipes(testStock);
           
-          // If this gives better results, remember it
-          if (result.totalRecipes > bestRecipeCount) {
-            bestRecipeCount = result.totalRecipes;
-            bestIngredient = ingredient;
-            bestRecipeMix = result.recipeMix;
+          // Check if this is better than our current best
+          if (!bestDistributionResult || result.totalRecipes > bestDistributionResult.totalRecipes) {
+            bestDistribution = distribution;
+            bestDistributionResult = result;
           }
         }
         
-        // If we found an ingredient that improves the results
-        if (bestIngredient) {
-          suggestedStock[bestIngredient] = (suggestedStock[bestIngredient] || 0) + 1;
-          additionalCount++;
+        // If we found a better distribution, apply it
+        if (bestDistribution) {
+          for (const [ing, amount] of Object.entries(bestDistribution)) {
+            suggestedStock[ing] = (suggestedStock[ing] || 0) + amount;
+            additionalCount += amount;
+          }
+          
+          // If no improvement was made, break early
+          const improvement = bestDistributionResult.totalRecipes - baseResult.totalRecipes;
+          if (improvement <= bestImprovement) {
+            break;
+          }
+          bestImprovement = improvement;
         } else {
-          // No improvement possible, break early
+          // No valid distribution found
           break;
         }
       }
       
       return suggestedStock;
+    }
+    
+    // Calculate the relative value of each ingredient based on recipe requirements
+    function calculateIngredientValues(recipeRequirements) {
+      const values = {};
+      
+      // Count how many recipes use each ingredient
+      for (const ingredient of ingredients) {
+        let recipeCount = 0;
+        let totalRequired = 0;
+        
+        for (const recipeName in recipeRequirements) {
+          const amount = recipeRequirements[recipeName][ingredient] || 0;
+          if (amount > 0) {
+            recipeCount++;
+            totalRequired += amount;
+          }
+        }
+        
+        // Value is based on recipe count and inverse of amount required
+        // Higher recipe count means more versatile ingredient
+        // Lower amount required means more efficient use
+        values[ingredient] = recipeCount > 0 ? recipeCount / Math.sqrt(totalRequired) : 0;
+      }
+      
+      return values;
+    }
+    
+    // Generate different distributions of ingredients
+    function generateDistributions(ingredientList, batchSize, valueMap) {
+      const distributions = [];
+      
+      // Sort ingredients by their value (most valuable first)
+      const sortedIngredients = [...ingredientList].sort((a, b) => 
+        (valueMap[b] || 0) - (valueMap[a] || 0)
+      );
+      
+      // Add focused distributions (all on one ingredient)
+      for (const ing of sortedIngredients) {
+        if (valueMap[ing] > 0) {
+          const dist = {};
+          dist[ing] = batchSize;
+          distributions.push(dist);
+        }
+      }
+      
+      // Add balanced distribution among top ingredients
+      const balancedDist = {};
+      const topCount = Math.min(3, sortedIngredients.length);
+      for (let i = 0; i < topCount; i++) {
+        balancedDist[sortedIngredients[i]] = Math.floor(batchSize / topCount);
+      }
+      // Distribute any remainder
+      let remainder = batchSize - (Math.floor(batchSize / topCount) * topCount);
+      for (let i = 0; i < remainder; i++) {
+        balancedDist[sortedIngredients[i]]++;
+      }
+      distributions.push(balancedDist);
+      
+      return distributions;
     }
     
     function calculateOptimalRecipes(ingredientStock) {
